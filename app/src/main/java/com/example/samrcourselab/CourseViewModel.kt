@@ -1,5 +1,6 @@
 package com.example.samrcourselab
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -27,8 +28,9 @@ class CourseViewModel : ViewModel() {
             }
 
             try {
-                println("--- Checking API ---")
+                Log.d("CourseApi", "--- Fetching API on ${Thread.currentThread().name} ---")
                 val networkCourses = ApiClient.courseApiService.fetchCourses()
+
 
                 _uiState.update { current ->
                     current.copy(
@@ -36,7 +38,7 @@ class CourseViewModel : ViewModel() {
                         errorMessage = null
                     )
                 }
-                println("--- API connected ---")
+                Log.d("CourseApi", "--- API connected successfully ---")
 
             } catch (e: SocketTimeoutException) {
                 _uiState.update { current ->
