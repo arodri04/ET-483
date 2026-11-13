@@ -2,22 +2,47 @@ package com.example.samrcourselab
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.samrcourselab.database.CourseDao
+import com.example.samrcourselab.mappers.toDomain
+import com.example.samrcourselab.mappers.toEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.IOException
 import java.net.SocketTimeoutException
 
-
-class CourseViewModel : ViewModel() {
+class CourseViewModel(
+    private val courseDao: CourseDao
+) : ViewModel() {
     private val _uiState = MutableStateFlow(CourseUiState())
     val uiState: StateFlow<CourseUiState> = _uiState.asStateFlow()
 
     init {
+        observeDatabaseCourses()
         fetchCoursesFromApi()
+    }
+
+    private fun observeDatabaseCourses() {
+        viewModelScope.launch {
+            courseDao.getCourses().collect { entities ->
+                val domainProfiles = entities.map { it.toDomain() }
+                val enrolledIds = entities
+                    .filter { it.isEnrolled }
+                    .map { it.courseCode }
+                    .toSet()
+
+                _uiState.update { current ->
+                    current.copy(
+                        courses = domainProfiles,
+                        enrolledCourseIds = enrolledIds
+                    )
+                }
+            }
+        }
     }
 
     fun fetchCoursesFromApi() {
@@ -30,21 +55,34 @@ class CourseViewModel : ViewModel() {
                 println("--- Checking API ---")
                 val networkCourses = ApiClient.courseApiService.fetchCourses()
 
+                val existingEnrolledIds = courseDao.getCourses()
+                    .first()
+                    .filter { it.isEnrolled }
+                    .map { it.courseCode }
+                    .toSet()
+
+                val entitiesToInsert = networkCourses.map { dto ->
+                    val domain = dto.toDomain()
+                    domain.toEntity(isEnrolled = domain.courseCode in existingEnrolledIds)
+                }
+
+                courseDao.insertCourses(entitiesToInsert)
+
                 _uiState.update { current ->
                     current.copy(
                         rawNetworkCourses = networkCourses,
                         errorMessage = null
                     )
                 }
-                println("--- API connected ---")
+                println("--- API connected and cached to Room ---")
 
             } catch (e: SocketTimeoutException) {
                 _uiState.update { current ->
-                    current.copy(errorMessage = "Server connection timed out. Please check if your server is running on host 0.0.0.0.")
+                    current.copy(errorMessage = "Server connection timed out.")
                 }
             } catch (e: IOException) {
                 _uiState.update { current ->
-                    current.copy(errorMessage = "Network error: Unable to reach the server. Check your connection or cleartext configuration.")
+                    current.copy(errorMessage = "Network error: Unable to reach the server.")
                 }
             } catch (e: Exception) {
                 _uiState.update { current ->
@@ -63,19 +101,23 @@ class CourseViewModel : ViewModel() {
         _uiState.update { current -> current.copy(searchQuery = query) }
     }
 
+    fun updateSelectedCourseId(courseId: String?) {
+        _uiState.update { current ->
+            current.copy(selectedCourseId = courseId)
+        }
+    }
+
     fun toggleOverridePrerequisites() {
         _uiState.update { current -> current.copy(overridePrereqs = !current.overridePrereqs) }
     }
 
     fun toggleEnrollment(courseCode: String) {
-        _uiState.update { current ->
-            val isCurrentlyEnrolled = courseCode in current.enrolledCourseIds
-            val updatedSet = if (isCurrentlyEnrolled) {
-                current.enrolledCourseIds - courseCode
-            } else {
-                current.enrolledCourseIds + courseCode
-            }
-            current.copy(enrolledCourseIds = updatedSet)
+        viewModelScope.launch(Dispatchers.IO) {
+            val isCurrentlyEnrolled = courseCode in _uiState.value.enrolledCourseIds
+            courseDao.updateEnrollmentState(
+                courseCode = courseCode,
+                isEnrolled = !isCurrentlyEnrolled
+            )
         }
     }
 }

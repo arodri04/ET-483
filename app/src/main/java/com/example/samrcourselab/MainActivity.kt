@@ -23,82 +23,43 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.res.painterResource
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import coil.compose.AsyncImage
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-
+import com.example.samrcourselab.database.CourseDatabase
 
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         println("Starting")
+
+        val database = CourseDatabase.getDatabase(applicationContext)
+        val courseDao = database.courseDao
+
+        val viewModelFactory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                return CourseViewModel(courseDao) as T
+            }
+        }
         setContent {
+            val viewModel = ViewModelProvider(this, viewModelFactory)[CourseViewModel::class.java]
             val navController = rememberNavController()
 
-//            val courseList: Array<CourseProfile> = arrayOf(
-//                CourseProfile(
-//                    "E T 483",
-//                    "Mobile App Programming",
-//                    4,
-//                    "Masadeh",
-//                    null,
-//                    listOf("Kotlin", "Compose", "Android"),
-//                    instructorImageUrl = ""
-//                ),
-//                CourseProfile(
-//                    "ICT 458",
-//                    "Web Dev and DB Applications",
-//                    4,
-//                    "Ball",
-//                    "Intro To Programming",
-//                    listOf("SQL", "noSQL", "Web"),
-//                    instructorImageUrl = ""
-//                ),
-//                CourseProfile(
-//                    "ICT 380",
-//                    "Python",
-//                    4,
-//                    "Braker",
-//                    null,
-//                    listOf("Flask", "Django", "Automation"),
-//                    instructorImageUrl = "https://et.nmsu.edu/images/Braker.jpg"
-//                ),
-//                CourseProfile(
-//                    "ICT 145",
-//                    "Network Essentials",
-//                    4,
-//                    "Ball",
-//                    "IT Essentials",
-//                    listOf("Flask", "Django", "Automation"),
-//                    instructorImageUrl = ""
-//                ),
-//                CourseProfile(
-//                    "ICT 220",
-//                    "Discreet Math",
-//                    4,
-//                    "Braker",
-//                    null,
-//                    listOf("Flask", "Django", "Automation"),
-//                    instructorImageUrl = "https://et.nmsu.edu/images/Braker.jpg"
-//                )
-//            )
-
-            val viewModel = androidx.lifecycle.ViewModelProvider(this)[CourseViewModel::class.java]
             val uiState by viewModel.uiState.collectAsState()
 
-            val courseList = remember(uiState.rawNetworkCourses) {
-
-                uiState.rawNetworkCourses.map { dto -> dto.toDomain() }
-
-            }
+            val courseList = uiState.courses
 
             val onOverrideToggle = {
                 viewModel.toggleOverridePrerequisites()
@@ -155,21 +116,20 @@ class MainActivity : ComponentActivity() {
                         ) { backStackEntry ->
                             val courseId = backStackEntry.arguments?.getString("courseId")
 
+                            LaunchedEffect(courseId) {
+                                viewModel.updateSelectedCourseId(courseId)
+                            }
+
                             CourseDetailScreen(
-                                courseId = courseId,
-                                courses = courseList.toTypedArray(),
-                                filteredCourses = filteredCourses,
-                                onSearchQueryChange = { newQuery ->
-                                    viewModel.updateSearchQuery(
-                                        newQuery
-                                    )
-                                },
-                                onOverrideToggle = onOverrideToggle,
-                                totalCredits = totalCredits,
-                                viewModel = viewModel,
+                                // Clean parameters! Let it rely entirely on the uiState
                                 uiState = uiState,
+                                totalCredits = totalCredits,
+                                onSearchQueryChange = { newQuery -> viewModel.updateSearchQuery(newQuery) },
+                                onOverrideToggle = onOverrideToggle,
+                                viewModel = viewModel, // Temporary until you fully remove it from checklist
                                 onBackClick = {
                                     navController.popBackStack()
+                                    viewModel.updateSelectedCourseId(null)
                                 }
                             )
                         }
@@ -211,26 +171,37 @@ fun CourseScreen(
             )
         }
     ) { paddingValues ->
-        if (uiState.isLoading) {
-            // Show a circular loading indicator on center screen
+        if (uiState.isLoading && uiState.courses.isEmpty()) {
+            // Only show full-screen spinner if Room has no cached courses yet
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
-        } else if (uiState.errorMessage != null) {
-            // Show an error banner box featuring a retry button layout
-            Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
+        } else if (uiState.errorMessage != null && uiState.courses.isEmpty()) {
+            // Only show full-screen error if Room has no cached courses at all
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Text(text = uiState.errorMessage!!, color = Color.Red)
                 Button(onClick = { viewModel.fetchCoursesFromApi() }) {
                     Text("Retry Connection")
                 }
             }
         } else {
+
+
             Column(
                 modifier = modifier
                     .fillMaxSize()
                     .padding(paddingValues)
             ) {
-
+                if (uiState.errorMessage != null) {
+                    Text(
+                        text = "Offline mode: showing cached courses",
+                        color = Color.Gray
+                    )
+                }
                 LazyColumn(
                     modifier = Modifier
                         .padding(36.dp),
@@ -239,13 +210,10 @@ fun CourseScreen(
                 ) {
                     if (filteredCourses.isEmpty()) {
                         items(courses) { course ->
-                            val canEnroll = course.prerequisite == null || uiState.overridePrereqs
-                            val isEnrolled = course.courseCode in uiState.enrolledCourseIds
-
                             CourseCard(
                                 course = course,
-                                isEnrolled = isEnrolled,
-                                canEnroll = canEnroll,
+                                isEnrolled = uiState.isEnrolled(course.courseCode),
+                                canEnroll = uiState.canEnroll(course.prerequisite),
                                 onEnrollToggle = { viewModel.toggleEnrollment(course.courseCode) },
                                 modifier = Modifier.clickable {
                                     onCourseClick(course.courseCode)
@@ -255,13 +223,10 @@ fun CourseScreen(
 
                     } else {
                         items(filteredCourses) { course ->
-                            val canEnroll = course.prerequisite == null || uiState.overridePrereqs
-                            val isEnrolled = course.courseCode in uiState.enrolledCourseIds
-
                             CourseCard(
                                 course = course,
-                                isEnrolled = isEnrolled,
-                                canEnroll = canEnroll,
+                                isEnrolled = uiState.isEnrolled(course.courseCode),
+                                canEnroll = uiState.canEnroll(course.prerequisite),
                                 modifier = Modifier.clickable {
                                     onCourseClick(course.courseCode)
                                 },
@@ -277,18 +242,23 @@ fun CourseScreen(
 
 @Composable
 fun CourseDetailScreen(
-    courseId: String?,
-    courses: Array<CourseProfile>,
-    filteredCourses: List<CourseProfile>,
+    uiState: CourseUiState,
+    totalCredits: Int,
     onSearchQueryChange: (String) -> Unit,
     onOverrideToggle: () -> Unit,
-    totalCredits: Int,
     viewModel: CourseViewModel,
-    uiState: CourseUiState,
     onBackClick: () -> Unit,
-    modifier: Modifier = Modifier.background(color = Color.DarkGray),
+    modifier: Modifier = Modifier.background(color = Color.DarkGray)
 ) {
-    val selectedCourse = courses.find { it.courseCode == courseId }
+    val selectedCourse = uiState.selectedCourse
+
+    //Need to make sure its safe so we can pass it into customtopbar
+    if (selectedCourse == null) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+
+        }
+        return
+    }
 
     Scaffold(
         topBar = {
@@ -300,7 +270,7 @@ fun CourseDetailScreen(
                 onOverrideToggle = onOverrideToggle,
                 isDetailView = true,
                 onBackClick = onBackClick,
-                courseId = courseId,
+                courseId = selectedCourse.courseCode,
                 modifier = Modifier.wrapContentHeight()
             )
         }
@@ -320,7 +290,7 @@ fun CourseDetailScreen(
                     item {
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = "Course details unavailable for ID: $courseId",
+                                text = "Course details unavailable for ID: $selectedCourse.courseCode",
                                 modifier = Modifier.padding(16.dp),
                                 color = MaterialTheme.colorScheme.error,
                                 fontWeight = FontWeight.Bold
@@ -328,13 +298,10 @@ fun CourseDetailScreen(
                         }
                     }
                 } else {
-                    val isEnrolled = selectedCourse.courseCode in uiState.enrolledCourseIds
-                    val canEnroll = selectedCourse.prerequisite == null || uiState.overridePrereqs
-
                     item {
                         Card(modifier = Modifier.fillMaxWidth()
                                             .then(
-                                        if (isEnrolled) {
+                                        if (uiState.canEnroll(selectedCourse.prerequisite)) {
                                                     Modifier.border(2.dp, Color.Red, RoundedCornerShape(8.dp))
                                                 } else {
                                                     Modifier
@@ -417,15 +384,15 @@ fun CourseDetailScreen(
 
                                     Button(
                                         onClick = { viewModel.toggleEnrollment(selectedCourse.courseCode) },
-                                        enabled = canEnroll || isEnrolled,
+                                        enabled = uiState.canEnroll(selectedCourse.prerequisite) || uiState.isEnrolled(selectedCourse.courseCode),
                                         modifier = Modifier.fillMaxWidth(),
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (isEnrolled) MaterialTheme.colorScheme.error
+                                            containerColor = if (uiState.isEnrolled(selectedCourse.courseCode)) MaterialTheme.colorScheme.error
                                             else MaterialTheme.colorScheme.primary
                                         )
                                     ) {
                                         Text(
-                                            text = if (isEnrolled) "Drop Course" else "Enroll",
+                                            text = if (uiState.isEnrolled(selectedCourse.courseCode)) "Drop Course" else "Enroll",
                                             fontWeight = FontWeight.Bold
                                         )
                                     }

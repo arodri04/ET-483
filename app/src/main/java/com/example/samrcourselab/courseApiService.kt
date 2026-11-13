@@ -24,10 +24,10 @@ fun CourseDto.toDomain(): CourseProfile {
     return CourseProfile(
         courseCode = this.id.orEmpty(),
         title = this.title.orEmpty(),
-        credits = this.credits,
-        instructor = this.instructor ?: "Unknown Instructor",
+        credits = this.credits ?: 0,
+        instructor = this.instructor.orEmpty(),
         instructorImageUrl = this.instructorImageUrl.orEmpty(),
-        prerequisite = this.prerequisite,
+        prerequisite = this.prerequisite.orEmpty(),
         tags = this.tags ?: emptyList()
     )
 }
