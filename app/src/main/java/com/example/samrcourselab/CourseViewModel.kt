@@ -2,6 +2,8 @@ package com.example.samrcourselab
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+
+import com.example.samrcourselab.data.UserPreferencesRepository
 import com.example.samrcourselab.database.CourseDao
 import com.example.samrcourselab.mappers.toDomain
 import com.example.samrcourselab.mappers.toEntity
@@ -16,13 +18,15 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 
 class CourseViewModel(
-    private val courseDao: CourseDao
+    private val courseDao: CourseDao,
+    private val userPreferencesRepository: UserPreferencesRepository
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(CourseUiState())
     val uiState: StateFlow<CourseUiState> = _uiState.asStateFlow()
 
     init {
         observeDatabaseCourses()
+        observeUserPreferences()
         fetchCoursesFromApi()
     }
 
@@ -97,18 +101,10 @@ class CourseViewModel(
         }
     }
 
-    fun updateSearchQuery(query: String) {
-        _uiState.update { current -> current.copy(searchQuery = query) }
-    }
-
     fun updateSelectedCourseId(courseId: String?) {
         _uiState.update { current ->
             current.copy(selectedCourseId = courseId)
         }
-    }
-
-    fun toggleOverridePrerequisites() {
-        _uiState.update { current -> current.copy(overridePrereqs = !current.overridePrereqs) }
     }
 
     fun toggleEnrollment(courseCode: String) {
@@ -120,4 +116,37 @@ class CourseViewModel(
             )
         }
     }
+
+    private fun observeUserPreferences() {
+        // Observe Prerequisite Override switch from DataStore
+        viewModelScope.launch {
+            userPreferencesRepository.overridePrereqsFlow.collect { isOverridden ->
+                _uiState.update { it.copy(overridePrereqs = isOverridden) }
+            }
+        }
+
+        // Observe Search Query string from DataStore
+        viewModelScope.launch {
+            userPreferencesRepository.searchQueryFlow.collect { savedQuery ->
+                _uiState.update { it.copy(searchQuery = savedQuery) }
+            }
+        }
+    }
+
+    fun updateSearchQuery(query: String) {
+        // Update UI immediately for smooth typing, then persist to DataStore
+        _uiState.update { it.copy(searchQuery = query) }
+        viewModelScope.launch(Dispatchers.IO) {
+            userPreferencesRepository.updateSearchQuery(query)
+        }
+    }
+
+    fun toggleOverridePrerequisites() {
+        val newValue = !_uiState.value.overridePrereqs
+        viewModelScope.launch(Dispatchers.IO) {
+            userPreferencesRepository.updateOverridePrereqs(newValue)
+        }
+    }
+
 }
+

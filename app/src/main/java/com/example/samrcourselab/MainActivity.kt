@@ -36,6 +36,8 @@ import coil.compose.AsyncImage
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.example.samrcourselab.data.UserPreferencesRepository
+import com.example.samrcourselab.data.dataStore
 import com.example.samrcourselab.database.CourseDatabase
 
 
@@ -47,11 +49,12 @@ class MainActivity : ComponentActivity() {
 
         val database = CourseDatabase.getDatabase(applicationContext)
         val courseDao = database.courseDao
+        val preferencesRepository = UserPreferencesRepository(applicationContext.dataStore)
 
         val viewModelFactory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return CourseViewModel(courseDao) as T
+                return CourseViewModel(courseDao, preferencesRepository) as T
             }
         }
         setContent {
