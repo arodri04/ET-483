@@ -41,6 +41,7 @@ import com.example.samrcourselab.database.CourseDatabase
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+
         super.onCreate(savedInstanceState)
         println("Starting")
 
